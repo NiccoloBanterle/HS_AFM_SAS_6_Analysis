@@ -2,6 +2,16 @@
 #pragma rtGlobals=3		// Use modern global access method and strict wave access.
 
 // FUNCTIONS FOR OPENING CLOSING (Figure 2)
+
+// The function FitOnSequence is used to fit a closed ring on each frame of an opening and closing sequence and extract the 
+// intensity profile along it (the profile is computed for each closed ring from minrad each radstep for a total of radnum). 
+// Only pixels above a minimum trshold tres are considered for computing the sum. To detect potential transitions the function 
+// RadiAndProfilesToTransitions is used to generate an "OpenClosed" wave where each time point of a ring sequence is classified as open or closed 
+// based on the presence of points below tres in the profile. Finally transitions based on a status change between open and closed are identified in the
+// "FindTransitions" function and eventual change in symmetry in an opening-closing events are identified in the "RefineTransitionSimmetry" function. 
+// Batch analysis on many sequences or experiments (where the treshold might need to be adjusted) are performed respoectively with the
+// "BatchProcessRings" and "BatchProcessExperiment" functions. 
+
 Function FitOnSequence(croppedin,tres,minrad,radstep,radnum)
 wave croppedin
 variable tres,,minrad,radstep,radnum
@@ -77,11 +87,7 @@ wave W_ImageLineProfile
 duplicate/o/free W_ImageLineProfile,W_ImageLineProfile_w
 W_ImageLineProfile_w = W_ImageLineProfile>tres ? W_ImageLineProfile[p]  : Nan
 wavetransform/O zapNaNs, W_ImageLineProfile_w
-//imagelineprofile/V xwave=wavex,ywave=wavey, srcwave=image,width=1
-//wave W_ImageLineProfile
-//W_ImageLineProfile_w+=W_ImageLineProfile
 if(dimsize(W_ImageLineProfile_w,0)>0)
-//variable pointovertrasold
 	sumprof=sum(W_ImageLineProfile_w)-(dimsize(image,0))*abs((mean(W_ImageLineProfile_w)-wavemax(image)))//-variance(W_ImageLineProfile_w)
 else
 	sumprof=0
@@ -239,7 +245,7 @@ variable status,isfirst,transstarttime,transstartstatus,transstop,COCCount,OCOCo
 	
 	//Count as Radius_Closing 
 	//Save CroppedRegion COC 
-//find Open->Closed->Open 
+	//find Open->Closed->Open 
 	//Check if radius Closed stayed constant 
 	//Count as Radius_Opening
 	//SavedCroppedRegion OCO
@@ -425,8 +431,34 @@ end
 
 // FUNCTIONS FOR KINETICS (Figure 3)
 
+// General use of the Kinetics Fitting procedures: after the segmentation and classification 
+//of each movies is done in Ilastik a matrix of the corresponding probabilites have to be generated as:
+	//ProbTable[][0]=table_ProbabilityofLabel1[p]
+	//ProbTable[][1]=table_ProbabilityofLabel2[p]
+	//ProbTable[][2]=table_ProbabilityofLabel3[p]
+	//ProbTable[][3]=table_ProbabilityofLabel4[p]
+	//ProbTable[][4]=table_ProbabilityofLabel5[p]
+	//ProbTable[][5]=table_ProbabilityofLabel6[p]
+	//ProbTable[][6]=table_ProbabilityofLabel7[p]
+	//ProbTable[][7]=table_ProbabilityofLabel8[p]
+	//ProbTable[][8]=table_ProbabilityofLabel9[p]
+	//ProbTable[][9]=table_ProbabilityofLabel10[p]
+	//ProbTable[][10]=table_Probabilityof7closed[p]
+	//ProbTable[][11]=table_Probabilityof8closed[p]
+	//ProbTable[][12]=table_Probabilityof9closed[p]
+	//ProbTable[][13]=table_Probabilityof10closed[p]
+// The kinetics analysis proceeds by converting the probability
+// in individual time traces with with the “ConvertProbToClass” and the “GenerateIndividualWaves” 
+// functions followed by the genreration of individual errors waves with the “GenerateError” and the “GenerateIndividualErrors” functions. 
+// Then the global concentration on the surface is computed with the “TotalConcentration” function and fitted with the 
+// “FitOverallConcComplete78910” custom fitting function. After the parameters for the surface adsorbition model are retrieved from this fit (see Methods for a description
+// of the fitting model), such parameters are fixed in the global fit of the individual concentrations with corresponding errors (to be done with the Global Fit package) 
+// using the "FitRingAssemblyComplete78910" custom fitting function (changing the p[16] to the total number of time points and fixing it, the p[17] to 10, i.e. the number of individual curves 
+// and p[18] to the oligomeric state corresponding fixed and different for each individual curve). 
+
 #include <KBColorizeTraces>
 #include <Global Fit 2>
+
 function ConvertProbToClass(timewave,probmatrix)
 wave timewave, probmatrix
 make/O/N=(wavemax(timewave)+1,dimsize(probmatrix,1)) TimeMatrix=0
@@ -438,22 +470,6 @@ for(class=0;class<dimsize(probmatrix,1);class+=1)
 endfor
 end
 
-//Analysis
-//ProbTable[][0]=table_ProbabilityofLabel1[p]
-//•ProbTable[][1]=table_ProbabilityofLabel2[p]
-//•ProbTable[][2]=table_ProbabilityofLabel3[p]
-//•ProbTable[][3]=table_ProbabilityofLabel4[p]
-//•ProbTable[][4]=table_ProbabilityofLabel5[p]
-//•ProbTable[][5]=table_ProbabilityofLabel6[p]
-//•ProbTable[][6]=table_ProbabilityofLabel7[p]
-//•ProbTable[][7]=table_ProbabilityofLabel8[p]
-//•ProbTable[][8]=table_ProbabilityofLabel9[p]
-//•ProbTable[][9]=table_ProbabilityofLabel10[p]
-//•ProbTable[][10]=table_Probabilityof7closed[p]
-//•ProbTable[][11]=table_Probabilityof8closed[p]
-//•ProbTable[][12]=table_Probabilityof9closed[p]
-//•ProbTable[][13]=table_Probabilityof10closed[p]
-//•ConvertProbToClass(table_timestep,ProbTable)
 
 function GenerateError(timewave,probmatrix)
 wave timewave, probmatrix
@@ -576,15 +592,20 @@ End
 
 // FUNCTIONS FOR PHASE DIAGRAMS (Figure 4)
 
+//These functions are used to simulate the coagulation-fragmentation system at varying input paramters. The main functions are the "PhaseDiagram" function and the "PhaseDiagramConstConc" used to simulate the
+// time evolution of the system at respectively variable and constant dimers concentration. The paramringassembly is a wave contraining all the input paramters for the coagualtion-fragmentation system 
+// as retrieved from the global fitting (see above FUNCTIONS FOR KINETICS). The two parameters to be varyied have to be specified in the param1 and param2 variables (row number of the parameter in paramringassembly corresponding to the paramters to be spanned). 
+// and their range as p1st and p2st (starting value of the range for parameter 1 and 2 respectively), p1bin and p2bin (the value of the step increase for each point for paramter 1 and 2 respectively) and p1num and p2num (the number of points in that axis for the phase diagram for paramter 1 and 2 respectively). 
+// The effect of changing reversibility of ring closing is simulated by the function OpeningFactorSimulation where different opening factors are simulated (starting from OpfactorSt and than increased by OpFactorbin for a total of OpfactorNum conditions). The simulations calulate the fraction of ring at different symmetries after a time timeat
 
-function SimulateRingAssemblyComplete(inputparam)//needed
+function SimulateRingAssemblyComplete(inputparam)//internally needed by PhaseDiagram to symulate the assembly dynamic 
 wave inputparam
 make/O/N=(16) SimKineticConstantsVC=inputparam[p] 
 make/O/N=(inputparam[16],inputparam[17]) FullmatrixSim=0
 IntegrateODE/M=0 RingAssemblyKinVarConc78910, SimKineticConstantsVC, FullmatrixSim
 end 
 
-function SimulateRingAssemblyCompleteConsConc(inputparam)//needed
+function SimulateRingAssemblyCompleteConsConc(inputparam)//internally needed by PhaseDiagramConstConc to symulate the assembly dynamic 
 wave inputparam
 make/O/N=(11) SimKineticConstantsVC=inputparam[p] 
 make/O/N=(inputparam[11],inputparam[12]) FullmatrixSim=0
@@ -615,7 +636,7 @@ end
 
 
 
-Function RingAssemblyKinConstConc78910(pw, tt, yw, dydt)//needed
+Function RingAssemblyKinConstConc78910(pw, tt, yw, dydt)//internally needed by SimulateRingAssemblyCompleteConsConc to symulate the dynamics
 	Wave pw						// pw[0] = kon, pw[1] = koff, pw[2] = kringon8, pw[3]=kingoff8, p[4]=Conc, p[5]=Kringon9,p[6]=kringoff9, p[7]=Kringon10, p[8]=kringoff10 p[9]=Kringon7, p[10]=kringoff7
 	Variable tt					// time value at which to calculate derivatives
 	Wave yw						// yw[0]-yw[9] containing concentrations of C1-C10  
@@ -690,6 +711,277 @@ end
 
 // FUNCTIONS FOR POLYMER CHAIN FITTING (Figure 5)
 
+// These functions are used to refine the fit coming from the Phyton first fitting (could in principle be used independently but the number of dimers in each assembly needs to be known) and 
+// successively generate a best fitting average template and realign all the individual fit to the template (in an iterative way, so that a new template is generated after realignemnt)
+// For the first step of the analysis (refining the values coming from the Phyton analysis) the main function is "Refineallpositions" 
+// For the function to work the images needs to be imported from the output of the Phyton script and hence in different data folders with the structure (""root:images:'"+num2str(i+1)+"':"") and within the folder named raw. 
+// The parameters are the input matrix angle matrixangin, the number of deviation from initial angle spanned deltanum and their incremental step deltastep The fitted images will be a total of numpos starting from posst.
+// The paramter smoothparam is a penalty for discontinuities in the derivative of the obtained profile and need to be adjusted according to the noisiness of the dataset. 
+// The second step of the analysis takes the fitted profiles and realign them. The function which alignes all the images to a template is  AlignRingToTemplate where anglematrix are the input angles, n is the ,cost,popwave,xpostemp,ypostemp,n,tres)
+
+function ModifyAngle(anglesin,angpos,delta,mainangle)
+wave anglesin
+variable angpos,delta,mainangle
+variable t2,t3,t4,d,theta
+variable dist1,dist2,distt
+wavetransform zapnans, anglesin
+duplicate/O anglesin, anglesin_r
+make/O/N=(dimsize(anglesin,0)) absanglesin
+absanglesin[]=mod(sum(anglesin,0,p)+p*mainangle,2*pi)
+if(angpos==0)
+	delta*=5
+//changes the second angle so that only the first position is moved and than rotates globally
+	anglesin_r[1]+=delta
+	anglesin_r[2]-=delta
+	delta/=5
+else
+	if((angpos+2)==(dimsize(anglesin_r,0)-1))
+		delta*=5
+		anglesin_r[angpos+2]+=delta//changes only the last angle
+		delta/=5
+	else
+		anglesin_r[angpos]+=delta
+		
+		dist1=(sin(absanglesin[angpos])+sin(absanglesin[angpos+1])+sin(absanglesin[angpos+2]))
+		dist2=(cos(absanglesin[angpos])+cos(absanglesin[angpos+1])+cos(absanglesin[angpos+2]))
+		theta=atan2(dist1, dist2 )
+		distt=sqrt(dist1^2+dist2^2)
+		t2=2*pi-mod(absanglesin[angpos]+delta-theta,2*pi)//pi/2
+		d=acos(0.5*(1-distt^2)+(distt)*cos(t2))
+		t3=atan(((1-cos(d))*sin(t2)-sin(d)*(distt-cos(t2)))/(sin(d)*sin(t2)+(1-cos(d))*(distt-cos(t2))))
+		t4=t3+d		
+		anglesin_r[angpos+1]=2*pi+(+t3+theta)-delta-absanglesin[angpos]-mainangle//-theta//-theta//-theta-delta
+		anglesin_r[angpos+2]=pi+t3-t4-mainangle//-theta
+		anglesin_r[angpos+3]+=-sum(anglesin_r,0,angpos+2)-(angpos+2)*mainangle+absanglesin[angpos+2]
+		//changes the angle and the next one so that only two positions are changed
+	endif
+endif
+
+end
+
+
+Function PlotAngFit(anglematrix,n,lsize,mainang)
+wave anglematrix
+variable n,lsize,mainang
+make/O/N=(dimsize(anglematrix,1)) SingAngles=Nan
+SingAngles[]=anglematrix[n][p]
+wavetransform zapnans, singangles
+make/O/N=(dimsize(singangles,0)+1) Xpos,Ypos
+variable i,prevang
+Xpos[0]=0
+Ypos[0]=0
+prevang=mainang
+for(i=1;i<dimsize(singangles,0)+1;i+=1)
+Xpos[i]=Xpos[i-1]+cos(prevang+singangles[i-1]+mainang)*lsize
+Ypos[i]=Ypos[i-1]+sin(prevang+singangles[i-1]+mainang)*lsize
+prevang+=singangles[i-1]+mainang
+endfor
+end
+
+Function PlotPosFromAnglesAndShifts(anglesin,shiftx,shifty,lsize,mainang)
+wave anglesin
+variable shiftx,shifty, lsize,mainang
+make/O/N=(dimsize(anglesin,0)-1) SingAngles=Nan
+SingAngles[]=anglesin[p+1]
+wavetransform zapnans, singangles
+make/O/N=(dimsize(singangles,0)+1) Xpos_r,Ypos_r
+variable i,prevang
+Ypos_r[0]=0
+Xpos_r[0]=0
+prevang=anglesin[0]
+for(i=1;i<dimsize(singangles,0)+1;i+=1)
+Ypos_r[i]=Ypos_r[i-1]+cos(prevang+singangles[i-1]+mainang)*lsize
+Xpos_r[i]=Xpos_r[i-1]+sin(prevang+singangles[i-1]+mainang)*lsize
+prevang+=singangles[i-1]+mainang
+endfor
+Xpos_r+=shiftx
+Ypos_r+=shifty
+end
+
+Function FindDxAndDy(anglesin_r,n)
+wave anglesin_r
+variable n
+string datafoldername
+dataFolderName="root:images:'"+num2str(n+1)+"':"
+SetDataFolder $dataFolderName
+wave raw
+PlotPosFromAnglesAndShifts(anglesin_r,0,0,3.9,2*pi/9)
+wave xpos_r,ypos_r
+duplicate/O xpos_r,xpos_rs
+duplicate/O ypos_r,ypos_rs
+make/o/n=(dimsize(raw,0),dimsize(raw,1)) ShiftTable_rs=0
+variable i,j
+for(i=0;i<dimsize(raw,0);i+=1)
+	for(j=0;j<dimsize(raw,1);j+=1)
+		xpos_rs=xpos_r+i
+		ypos_rs=ypos_r+j
+		ShiftTable_rs[i][j]= SumProfile2(raw,xpos_rs,ypos_rs)
+	endfor
+endfor
+imagestats ShiftTable_rs
+xpos_rs=xpos_r+V_maxRowLoc
+ypos_rs=ypos_r+V_maxColLoc
+variable/G Xshiftrs=V_maxRowLoc
+variable/G Yshiftrs=V_maxColLoc
+SetDataFolder root:
+return ShiftTable_rs[V_maxRowLoc][V_maxColLoc]
+end
+
+function SumProfile2(image,wavex,wavey)
+wave image, wavex,wavey
+variable sumprof
+imagelineprofile xwave=wavex,ywave=wavey, srcwave=image,width=1
+wave W_ImageLineProfile
+duplicate/o W_ImageLineProfile,W_ImageLineProfile_w
+imagelineprofile xwave=wavex,ywave=wavey, srcwave=image,width=2
+wave W_ImageLineProfile
+W_ImageLineProfile_w+=W_ImageLineProfile
+imagelineprofile xwave=wavex,ywave=wavey, srcwave=image,width=3
+wave W_ImageLineProfile
+W_ImageLineProfile_w+=W_ImageLineProfile
+imagelineprofile xwave=wavex,ywave=wavey, srcwave=image,width=4
+wave W_ImageLineProfile
+W_ImageLineProfile_w+=W_ImageLineProfile
+W_ImageLineProfile_w/=4
+sumprof=sum(W_ImageLineProfile_w)
+return sumprof
+end
+
+function RefinePosition(matrixangle,n,Deltanum,deltastep,SmoothParam)
+	wave matrixangle
+	variable n,deltanum,deltastep
+	variable SmoothParam
+	variable deltain
+	make/O/N=(2*deltanum+1) ProfSum
+	make/O/N=(dimsize(matrixangle,1)) anglesin
+	variable j,k,tempsum,l
+	anglesin[]=matrixangle[n][p]
+	wavetransform zapnans,anglesin
+	make/o/N=3 BestN
+	make/O/N=(dimsize(anglesin,0)+1,3) anglesin_rn
+	anglesin_rn[0,(dimsize(anglesin,0)-2)][0]=anglesin[p]
+	anglesin_rn[(dimsize(anglesin,0)-1),(dimsize(anglesin,0))]=Nan
+	anglesin_rn[0,(dimsize(anglesin,0)-1)][1]=anglesin[p]
+	anglesin_rn[dimsize(anglesin,0)][1]=Nan
+	anglesin_rn[0,(dimsize(anglesin,0)-1)][2]=anglesin[p]
+	anglesin_rn[dimsize(anglesin,0)][2]=0
+	make/o/N=(dimsize(profsum,0),dimsize(anglesin,0)+1) SumNoAngle,RegFactor
+	variable count,start,stop,inc
+	ModifyAngle(anglesin,j,0,2*pi/9)
+	wave anglesin_r
+	FindDxAndDy(anglesin_r,n)
+
+	for(l=0;l<3;l+=1)
+		redimension/N=(dimsize(anglesin_rn,0)) anglesin
+		anglesin=Nan
+		anglesin[]=anglesin_rn[p][l]
+		wavetransform zapnans,anglesin
+		for(k=0;k<2;k+=1)
+			for(j=0;j<max((dimsize(anglesin,0)-2),1);j+=1)
+				inc = k==0 ? j : max((dimsize(anglesin,0)-2),1)-1-j
+				profsum=0
+				for(count=0;count<dimsize(profsum,0);count+=1)
+					
+					deltain=-deltanum*deltastep+count*deltastep
+					ModifyAngle(anglesin,inc,deltain,2*pi/9)
+					doupdate
+					wave anglesin_r
+					wavetransform zapnans,anglesin_r
+					duplicate/o anglesin_r,anglesin_rAb
+					anglesin_rAb[]= (abs(mod(anglesin_r[p],2*pi))<((2*pi-abs(mod(anglesin_r[p],2*pi))))) ? mod(anglesin_r[p],2*pi):(2*pi-abs(mod(anglesin_r[p],2*pi)))
+					wavestats/q anglesin_rAb
+					anglesin_rAb-=V_avg
+					anglesin_rAb=abs(anglesin_rAb)
+					if(dimsize(anglesin_r,0)==dimsize(anglesin,0))
+						FindDxAndDy(anglesin_r,n)
+						string datafoldername
+						dataFolderName="root:images:'"+num2str(n+1)+"':"
+						SetDataFolder $dataFolderName
+						wave raw
+						wave xpos_rs, ypos_rs 
+						SumProfile2(raw,xpos_rs,ypos_rs)
+						wave W_ImageLineProfile_w
+						variable parsum
+						if(inc==0)
+							parsum = sum(W_ImageLineProfile_w,0,round(3.9))
+						else
+							if(inc==(dimsize(xpos_rs,0)-3))
+								parsum = sum(W_ImageLineProfile_w,dimsize(W_ImageLineProfile_w,0)-1-round(inc*3.9),dimsize(W_ImageLineProfile_w,0)-1)
+							else
+								parsum = k==0 ? sum(W_ImageLineProfile_w,0,round((inc)*3.9)) : sum(W_ImageLineProfile_w,round(3.9*inc),dimsize(W_ImageLineProfile_w,0)-1)
+							endif
+						endif
+						
+						
+						ProfSum[count]=parsum-smoothparam*(sum(anglesin_rAb,1,(dimsize(anglesin_rAb,0)-1)))
+						SetDataFolder "root:"
+					else
+						ProfSum[count]=0
+					endif	
+				endfor
+				wavestats/q ProfSum
+				ModifyAngle(anglesin,inc,-deltanum*deltastep+V_maxloc*deltastep,2*pi/9)
+				wave anglesin_r
+				FindDxAndDy(anglesin_r,n)
+				
+				anglesin=anglesin_r
+			endfor
+			
+		endfor	
+		
+	Bestn[l]=	FindDxAndDy(anglesin_r,n)
+	anglesin_rn[0,dimsize(anglesin_r,0)-1][l]=anglesin_r[p]
+	endfor
+	variable bn
+	if((bestn[1]-bestn[0])<0.8*(bestn[0]/(dimsize(anglesin_rn,0)-2)))
+	bn=0
+	else
+		if((bestn[2]-bestn[1])>0.8*(bestn[0]/(dimsize(anglesin_rn,0)-2)))
+		bn=2
+		else
+		bn=1
+		endif
+	endif
+	make/O/N=(dimsize(anglesin_rn,0)) anglesin_r
+	anglesin_r[]=anglesin_rn[p][bn]
+	wavetransform zapnans, anglesin_r
+	FindDxAndDy(anglesin_r,n)
+end
+
+function Refineallpositions(matrixangin,deltanum,deltastep,posst,numpos,smoothparam)
+wave matrixangin
+variable deltanum,deltastep
+variable posst,numpos,smoothparam
+variable i
+duplicate/o matrixangin,matrixangin_r
+matrixangin_r=Nan
+for(i=posst;i<(posst+numpos);i+=1)
+	RefinePosition(matrixangin,i,Deltanum,deltastep,smoothparam)
+	wave anglesin_r
+	matrixangin_r[i][0,dimsize(anglesin_r,0)-1]=anglesin_r[q]
+endfor
+end
+
+Function FitScore(imstart,imnum,minheight,maxstd)
+variable imstart,imnum,minheight,maxstd
+string datafoldername
+variable i
+setdatafolder root:
+make/o/N=(imnum) ScoreN_w,Scorestd_w,Score_Avg
+for(i=imstart;i<(imstart+imnum);i+=1)
+	dataFolderName="root:images:'"+num2str(i+1)+"':"
+	SetDataFolder $dataFolderName
+	wave raw
+	wave xpos_rs,ypos_rs
+	SumProfile2(raw,xpos_rs,ypos_rs)
+	wave W_ImageLineProfile_w
+	wavestats W_ImageLineProfile_w
+	ScoreN_w[i-imstart]=i
+	Scorestd_w[i-imstart]=V_sdev
+	Score_Avg[i-imstart]=V_Avg
+endfor
+end
+
 function SingClassImages(alignedstack,popwave,n)
 wave alignedstack,popwave
 variable n
@@ -742,7 +1034,6 @@ for(i=0;i<dimsize(objwave,2);i+=1)
 	wave  M_ImagePlane
 	imagetransform/IOFF={-xposmatrix[i][0]+dimsize(M_ImagePlane,0)/2,-yposmatrix[i][0]+dimsize(M_ImagePlane,1)/2,0} offsetimage, M_ImagePlane
 	wave M_OffsetImage
-	
 	if(realignedmatrix[i][0]==0)
 		duplicate/o M_OffsetImage,M_RotatedImage
 	else
@@ -757,22 +1048,9 @@ for(i=0;i<dimsize(objwave,2);i+=1)
 endfor
 end
 
-function ExtractFittedImages(objectwave,imagenumwave)
-wave objectwave,imagenumwave
-variable i
-string nameofnewwave
-nameofnewwave="Sel_"+nameofwave(objectwave)
-make/O/N=(dimsize(objectwave,0),dimsize(objectwave,1),dimsize(imagenumwave,0)) $nameofnewwave
-wave Selwave=$nameofnewwave
-variable count=0
-for(i=0;i<dimsize(imagenumwave,0);i+=1)
-Selwave[][][count]=objectwave[p][q][imagenumwave[i]]
-count+=1
-endfor
-end
 
-Function AlignRingToTemplate(anglematrix,cost,popwave,xpostemp,ypostemp,n,tres)
-wave anglematrix,cost,popwave,xpostemp,ypostemp
+Function AlignRingToTemplate(anglematrix,popwave,xpostemp,ypostemp,n,tres)
+wave anglematrix,popwave,xpostemp,ypostemp
 variable n,tres
 make/O/N=(dimsize(anglematrix,0),dimsize(anglematrix,1)) AngleMatrixRealigned=Anglematrix
 make/O/N=(dimsize(anglematrix,0)) Xshift,Yshift
@@ -781,7 +1059,7 @@ variable i,count=0
 make/N=(1,n)/o CurrentPoly
 make/O/N=3 ShiftAndFirstAngle
 for(i=0;i<dimsize(anglematrix,0);i+=1)
-	if(popwave[i]==n && cost[i]>tres)
+	if(popwave[i]==n)
 		CurrentPoly[0][]=anglematrix[i][q]
 		ShiftAndFirstAngle=0
 		AlignToTemp(shiftandFirstAngle,currentpoly,xpostemp,ypostemp,n)
@@ -801,7 +1079,7 @@ wave NewXpos=$NewxPosName
 wave NewYpos=$NewyPosName
 count=0
 for(i=0;i<dimsize(anglematrix,0);i+=1)
-	if(popwave[i]==n && cost[i]>tres)
+	if(popwave[i]==n)
 		CurrentPoly[0][]=AngleMatrixRealigned[i][q]
 		PlotAngFit(currentpoly,0,3.9,2*pi/9)
 		wave xpos,ypos
@@ -829,63 +1107,8 @@ shiftandFirstAngle=0
 Optimize/D=4/I=10000/M = {3, 0 }/S=10/X=shiftandFirstAngle/Y=3/R=Rx SingleDistance,w
 End
 
-function GenerateTemplate(n,avAngle)
-variable n,avangle
-make/O/N=1 w=n
-string nameTemp
-nameTemp="Template"+num2str(n)
-make/o/N=(n) $nameTemp
-wave InitialAngle=$nameTemp
-InitialAngle=avAngle-2*pi/9
-Optimize/S =0.5/X=initialangle TotalDistance,w
-make/o/N=(1,n) Dummy
-Dummy[0][]=initialangle[q] 
-PlotAngFit(Dummy,0,4.02,avAngle)
-wave xpos,ypos
-string nameTempX,nameTempY
-nameTempX=nameTemp+"X"
-nameTempY=nameTemp+"Y"
-duplicate xpos,$nameTempX
-duplicate ypos,$nameTempY
-end
 
-function GenerateTemplateRef(n)
-variable n
-make/O/N=1 w=n
-string nameTemp
-nameTemp="TemplateR"+num2str(n)
-make/o/N=(n) $nameTemp
-wave InitialAngle=$nameTemp
-InitialAngle=0
-Optimize/M={1,1}/X=initialangle TotalDistanceRef,w
-make/o/N=(1,n) Dummy
-Dummy[0][]=initialangle[q] 
-PlotAngFit(Dummy,0,4.02,2*pi/9)
-wave xpos,ypos
-string nameTempX,nameTempY
-nameTempX=nameTemp+"X"
-nameTempY=nameTemp+"Y"
-duplicate/O xpos,$nameTempX
-duplicate/O ypos,$nameTempY
-end
 
-Function PlotAngFit(anglematrix,n,lsize,mainang)
-wave anglematrix
-variable n,lsize,mainang
-make/O/N=(dimsize(anglematrix,1)) SingAngles=Nan
-SingAngles[]=anglematrix[n][p]
-wavetransform zapnans, singangles
-make/O/N=(dimsize(singangles,0)+1) Xpos,Ypos
-variable i,prevang
-Xpos[0]=0
-Ypos[0]=0
-prevang=mainang
-for(i=1;i<dimsize(singangles,0)+1;i+=1)
-Xpos[i]=Xpos[i-1]+cos(prevang+singangles[i-1]+mainang)*lsize
-Ypos[i]=Ypos[i-1]+sin(prevang+singangles[i-1]+mainang)*lsize
-prevang+=singangles[i-1]+mainang
-endfor
-end
 
 function SingleDistance(w,shiftandFirstAngle)
 wave w
@@ -906,7 +1129,12 @@ for(i=0;i<dimsize(xpostempp,0);i+=1)
 endfor
 return TotDist
 end
+
 // FUNCTIONS FOR 3D MODELS (Figure 6)
+
+// This set of functions can be used to simulate the angle matrixes (each column representing a stack layer) to describe the different stacking geometrical configurations in case of 
+// oscillating model (see Methods and Main Text for description of the model). nlayer is the variable indicating the number of layers to be simulated, L the spoke lenght, H the distacne between two layers (head domains)
+// sigma the noise (to be set to zero for perfect oscillations), Amp the amplitude of the oscillations. Shiftnum oscillations will be generated starting from a phase angle of shiftSt incremented by shiftnum
 
 function GenerateChiralTurnRanVarTurnShift(nlayer,L,H,sigma,Amp,shiftst,shiftbin,shiftnum)
 	variable nlayer,L,H,sigma,Amp,shiftst,shiftbin,shiftnum
@@ -924,7 +1152,6 @@ function GenerateChiralTurnRanVarTurnShift(nlayer,L,H,sigma,Amp,shiftst,shiftbin
 								Angles1[n]= gnoise(sigma)+Amp*cos(1.45*(mod((n+1),9))-0.73)	
 								Angles2[n]= gnoise(sigma)+Amp*cos(1.45*(mod((n+1)+shift,9))-0.73)
 								ChiralTurnvarMatrixAngle[][0]=Angles1[p]
-								//ChiralTurnvarMatrixAngle[][1]=Angles2[p]
 						endfor
 					else
 						angles1=ChiralTurnvarMatrixAngle[p][count]
@@ -960,7 +1187,6 @@ function GenerateChiralTurnRanVarTurnShift(nlayer,L,H,sigma,Amp,shiftst,shiftbin
 								Angles1[n]= gnoise(sigma)+Amp*cos(1.45*(mod((n+1),9))-0.73)	
 								Angles2[n]= gnoise(sigma)-Amp*cos(1.45*(mod((n+1)+shift2,9))-0.73)
 								ChiralTurnvarMatrixAngle[][0]=Angles1[p]
-								//ChiralTurnvarMatrixAngle[][1]=Angles2[p]
 						endfor
 					else
 						angles1=ChiralTurnvarMatrixAngle[p][count]
@@ -994,7 +1220,7 @@ function GenerateChiralTurnRanVarTurnShift(nlayer,L,H,sigma,Amp,shiftst,shiftbin
 		endfor	
 end
 
-Function IsOverlapping(H,L,a1,b1)
+Function IsOverlapping(H,L,a1,b1) // internally needed by GenerateChiralTurnRanVarTurnShift to check if two spokes between different layers are crossing/touching
 variable H,L,a1,b1
 if(sign(a1)==sign(b1) || a1==b1)
 	return 0	
@@ -1009,7 +1235,7 @@ else
 endif
 end
 
-Function Distance(H,L,a1,b1)
+Function Distance(H,L,a1,b1) // internally needed by GenerateChiralTurnRanVarTurnShift to compute the distance between non-contancing spokes
 variable H,L,a1,b1
 
 	variable x1,x2,y1,y2
@@ -1021,34 +1247,20 @@ variable H,L,a1,b1
 
 end
 
-Function UnimodalRandom(L,H,minspokes,sigma)
-	variable L,H,minspokes,sigma
-	variable count=0,ncontact,n
-	make/O/N=(9,400) UnimodalMatrixAngle=Nan
-	do
-		make/O/N=9 Angles1,Angles2
-		if(count==0)
-			Angles1=gnoise(sigma)
-			Angles2=gnoise(sigma)
-			UnimodalMatrixAngle[][0]=Angles1[p]
-			UnimodalMatrixAngle[][1]=Angles2[p]
-		else
-			angles1=angles2
-			angles2=gnoise(sigma)
-			UnimodalMatrixAngle[][count+1]=Angles2[p]
-		endif
-		ncontact=0
-		for(n=0;n<9;n+=1)
-			ncontact+=IsOverlapping(H,L,angles1[n],angles2[n])
-		endfor
-		count+=1
-	while(ncontact>=minspokes)
-	deletepoints/M=1 count,(400-count),UnimodalMatrixAngle
-	print count
-	return count
-end
+
 
 // FUNCTIONS FOR KYMOGRAPH FITTING (Figure S5)
+
+// This set of functions are used to randomly split the aquired kymographs in bloks and perform the statistical analysis for the percentage of 
+// spokes bound to the surface at variable treshold as described in the method section. The first step is translating the kymograph data in a mobility matrix 
+// using the FindMaxInProfileNew function of which the inputs are the profilein wave (the profile over time) and the meanposwave and winsizewave specifing the approximate 
+// location of each spoke (meanposwave) and the window in which the search for the maximum should be performed (winsizewave). Subsequently the RepeatedAnalysis 
+// should be used to count the fraction of bound and non bound spokes dividing the mobility matrix in random blocks and counting the bound and non bound spokes 
+// as a function of the mobility treshold. The outcome of this analysis is compared within RepeatedAnalysis function with the one from a simulated random matrix generated with the function
+// FractionBoundDifferentPercent. The input of the repeatedanalysis functions are the basename of the peakpositions, the blockstart (blockst), the number of blocks (blocknum)
+// as well the lower treshold to be considered (trst) the treshold intervals (trbin) and the number of tresholds to be spanned (trnum). Finally the number of repetions of
+// the analysis is defined by repnum. 
+
 function repeatedanalysis(basename,blockst,blocknum,trst,trbin,trnum,repnum)
 string basename
 variable blockst,blocknum,trst,trbin,trnum
@@ -1059,7 +1271,7 @@ for(i=0;i<repnum;i+=1)
 VariableAverage(basename,blockst,blocknum)
 wave mobilitymatrix,mobilitymatrixt
 
-IsMatrixRandom(mobilitymatrixt,trst,trbin,trnum)
+IsMatrixRandom(mobilitymatrixt,trst,trbin,trnum) 
 wave MaxSigmaDistance
 maxsigmamatrix[][i]=MaxSigmaDistance[p]
 endfor
@@ -1071,7 +1283,7 @@ matrixop MaxSigmaStd=sumrows(MaxSigmaMatSssum)
 MaxSigmaStd/=repnum
 End
 
-function RandomBlock(peakposwave,blocksize)
+function RandomBlock(peakposwave,blocksize) //needed in VariableAverage
 wave peakposwave
 variable blocksize
 make/O/N=(dimsize(peakposwave,1)) CurrentBlockAv
@@ -1087,7 +1299,7 @@ matrixop/O NewAvDisp=sumcols(BlockDis)^T
 NewAvDisp/=blocksize
 end
 
-function VariableAverage(basename,blockst,blocknum)
+function VariableAverage(basename,blockst,blocknum) //Needed in RepeatedAnalysis
 string basename
 variable blockst,blocknum
 string matchname
@@ -1109,14 +1321,13 @@ endfor
 matrixop/o  mobilitymatrixt=mobilitymatrix^t
 end
 
-function IsMatrixRandom(mobilitymatrix,trst,trbin,trnum)
+function IsMatrixRandom(mobilitymatrix,trst,trbin,trnum)//Needed in RepeatedAnalysis
 wave mobilitymatrix
 variable trst,trbin,trnum
 variable i
 make/N=(dimsize(mobilitymatrix,0),dimsize(mobilitymatrix,1))/O CurrentMobMat
 FractionBoundDifferentPerc(0,1/trnum,trnum,1000)
 wave SimProb,SimFractionBound,SimEqualratios,SimStdRatios
-//SimStdRatios/=sqrt(dimsize(mobilitymatrix,2))
 make/O/N=(trnum)/FREE SigmaDistance
 make/O/N=(dimsize(mobilitymatrix,2)) MaxSigmaDistance
 for(i=0;i<dimsize(mobilitymatrix,2);i+=1)
@@ -1197,7 +1408,7 @@ for(j=0;j<9;j+=1)
 endfor
 end
 
-function FractionBoundDifferentPerc(probst,probbin,probnum,n)
+function FractionBoundDifferentPerc(probst,probbin,probnum,n) //
 variable probst,probbin,probnum,n
 variable i,prob
 make/O/N=(probnum) SimProb,SimFractionBound,SimEqualratios,SimStdRatios
@@ -1212,7 +1423,7 @@ SimStdRatios[i]= sqrt(variance(Simulatedratios))
 endfor
 end
 
-Function SlidingTreshold(matrixin,trst,trbin,trnum)
+Function SlidingTreshold(matrixin,trst,trbin,trnum) //Needed by IsMatrixRandom 
 wave matrixin
 variable trst,trbin,trnum
 variable i,tr
@@ -1227,7 +1438,7 @@ equallyor[i]=CountEquallyOriented(matrixin,tr)
 endfor
 end
 
-function RunMultipleSimulations(numsim,prob)
+function RunMultipleSimulations(numsim,prob) //Needed by FractionBoundDifferentPerc
 variable numsim,prob
 variable i
 make/o/N=(numsim) Simulatedratios,SimFrBound
@@ -1239,7 +1450,7 @@ for(i=0;i<numsim;i+=1)
 endfor
 end
 
-function CountEquallyOriented(matrixin,tres)
+function CountEquallyOriented(matrixin,tres) //Needed by RunMultipleSimulations and SlidingTreshold
 wave matrixin
 variable tres
 variable nighno=0,nn,equally=0,i,j,k
@@ -1269,7 +1480,7 @@ endfor
 return equally/nighno
 end
 
-Function SimulteAdherenceMatrix(N,prob)
+Function SimulteAdherenceMatrix(N,prob) // Needed by RunMultipleSimulations
 variable N,prob
 make/N=(9,N)/o SimulatedAdMat
 variable i,j
